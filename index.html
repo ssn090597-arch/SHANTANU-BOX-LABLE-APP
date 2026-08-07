@@ -23,7 +23,7 @@
             <h1 class="text-3xl font-extrabold text-gray-800 flex items-center justify-center gap-2">
                 📦 <span>Box Label Generator</span>
             </h1>
-            <p class="text-sm text-gray-500 mt-2">v3.2 MRP Layout & Width Fix Engine</p>
+            <p class="text-sm text-gray-500 mt-2">v3.3 Smart Header & Data Engine</p>
         </div>
 
         <!-- File Upload Area -->
@@ -66,9 +66,10 @@
 
         document.getElementById('excelFile').addEventListener('change', handleFileSelect);
 
-        function cleanStr(str) {
+        // Normalize string for accurate key comparison
+        function norm(str) {
             if (str === null || str === undefined) return '';
-            return String(str).toUpperCase().replace(/[^A-Z0-9]/g, '');
+            return String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
         }
 
         async function handleFileSelect(e) {
@@ -84,38 +85,60 @@
                     const workbook = XLSX.read(data, { type: 'array' });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
 
-                    let jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+                    let rawGrid = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
 
+                    // Find Header Row
                     let headerRowIndex = -1;
-                    const boxKeywords = ['BOXCOUNT', 'BOXNO', 'BOX', 'BOXNUMBER', 'BOXLABEL'];
+                    const headerKeywords = ['merchant', 'sku', 'box', 'item', 'challan', 'invoice', 'qty'];
 
-                    for (let r = 0; r < Math.min(jsonData.length, 15); r++) {
-                        const row = jsonData[r];
-                        if (!row) continue;
+                    for (let r = 0; r < Math.min(rawGrid.length, 20); r++) {
+                        const row = rawGrid[r];
+                        if (!row || row.length === 0) continue;
+                        let matchCount = 0;
                         for (let c = 0; c < row.length; c++) {
-                            const val = cleanStr(row[c]);
-                            if (boxKeywords.some(kw => val.includes(kw))) {
-                                headerRowIndex = r;
-                                break;
+                            const val = norm(row[c]);
+                            if (headerKeywords.some(kw => val.includes(kw))) {
+                                matchCount++;
                             }
                         }
-                        if (headerRowIndex !== -1) break;
+                        if (matchCount >= 2) {
+                            headerRowIndex = r;
+                            break;
+                        }
                     }
 
                     if (headerRowIndex === -1) {
-                        showStatus("❌ 'BOX' Column not found in Excel!", "text-red-600");
+                        showStatus("❌ Table Header Row not found in Excel!", "text-red-600");
                         return;
                     }
 
-                    const rawData = XLSX.utils.sheet_to_json(firstSheet, { range: headerRowIndex });
+                    // Extract Metadata (PO & Destination) from top rows if present
+                    let metaPO = '';
+                    let metaDest = '';
+                    for (let r = 0; r < headerRowIndex; r++) {
+                        const row = rawGrid[r];
+                        if (!row) continue;
+                        for (let c = 0; c < row.length; c++) {
+                            const val = String(row[c] || '').trim();
+                            const nVal = norm(val);
+                            if (nVal === 'po' && row[c+1]) {
+                                metaPO = String(row[c+1]).trim();
+                            }
+                            if ((nVal.includes('boxdetail') || nVal.includes('destination') || nVal.includes('shipto')) && row[c+1]) {
+                                metaDest = String(row[c+1]).trim();
+                            }
+                        }
+                    }
+
+                    const tableData = XLSX.utils.sheet_to_json(firstSheet, { range: headerRowIndex });
                     
-                    if (rawData.length > 0) {
-                        const colsFound = Object.keys(rawData[0]).join(' | ');
+                    if (tableData.length > 0) {
+                        const colsFound = Object.keys(tableData[0]).join(' | ');
                         document.getElementById('detectedColsText').innerText = colsFound;
                         document.getElementById('debugBox').classList.remove('hidden');
                     }
 
-                    await generatePDF(rawData);
+                    await generatePDF(tableData, metaPO, metaDest);
 
                 } catch (err) {
                     console.error(err);
@@ -125,26 +148,31 @@
             reader.readAsArrayBuffer(file);
         }
 
-        function findValueInRow(row, keywordList, defaultValue = '') {
+        // Smart column lookup
+        function getColValue(row, possibleKeys, defaultValue = '') {
             const keys = Object.keys(row);
             
-            for (let kw of keywordList) {
+            // Exact normalized match
+            for (let pk of possibleKeys) {
+                const normPK = norm(pk);
                 for (let k of keys) {
-                    if (cleanStr(k) === cleanStr(kw)) {
-                        const val = row[k];
-                        if (val !== undefined && val !== null && String(val).trim() !== '') {
-                            return String(val).trim();
+                    if (norm(k) === normPK) {
+                        const v = row[k];
+                        if (v !== undefined && v !== null && String(v).trim() !== '') {
+                            return String(v).trim();
                         }
                     }
                 }
             }
 
-            for (let kw of keywordList) {
+            // Partial normalized match
+            for (let pk of possibleKeys) {
+                const normPK = norm(pk);
                 for (let k of keys) {
-                    if (cleanStr(k).includes(cleanStr(kw))) {
-                        const val = row[k];
-                        if (val !== undefined && val !== null && String(val).trim() !== '') {
-                            return String(val).trim();
+                    if (norm(k).includes(normPK)) {
+                        const v = row[k];
+                        if (v !== undefined && v !== null && String(v).trim() !== '') {
+                            return String(v).trim();
                         }
                     }
                 }
@@ -153,23 +181,22 @@
             return defaultValue;
         }
 
-        async function generatePDF(data) {
+        async function generatePDF(data, metaPO, metaDest) {
             const rawGroups = {};
-            const boxKw = ['BOXCOUNT', 'BOXNO', 'BOX', 'BOXNUMBER'];
 
             data.forEach(row => {
-                const rawBoxVal = findValueInRow(row, boxKw, '');
-                if (!rawBoxVal) return;
+                const boxVal = getColValue(row, ['box count', 'boxcount', 'box no', 'boxno', 'box', 'boxnumber'], '');
+                if (!boxVal) return;
 
-                if (!rawGroups[rawBoxVal]) rawGroups[rawBoxVal] = [];
-                rawGroups[rawBoxVal].push(row);
+                if (!rawGroups[boxVal]) rawGroups[boxVal] = [];
+                rawGroups[boxVal].push(row);
             });
 
             const uniqueRawKeys = Object.keys(rawGroups);
             totalBoxesFound = uniqueRawKeys.length;
 
             if (totalBoxesFound === 0) {
-                showStatus("❌ No active box rows found in Excel!", "text-red-600");
+                showStatus("❌ No Box data found! Check 'BOX COUNT' column.", "text-red-600");
                 return;
             }
 
@@ -182,30 +209,25 @@
             let isFirstPage = true;
             let currentSequentialBoxNo = 1;
 
-            const destKeywords = ['DESTINATION', 'SHIPTO', 'PARTYNAME', 'PARTY', 'CUSTOMER', 'CUSTOMERNAME', 'CONSIGNEE', 'BUYER', 'NAME', 'DELIVERYTO'];
-            const poKeywords = ['PONO', 'PONUMBER', 'PURCHASEORDER', 'ORDERNO', 'ORDNO', 'ORDER', 'PO'];
-            const invKeywords = ['INVOICENUMBER', 'INVOICENO', 'INVNO', 'INVOICE', 'INV'];
-            const challanKeywords = ['CHALLANNO', 'CHALLAN', 'CHALLANNUMBER', 'DC'];
-
             for (let rawKey of uniqueRawKeys) {
                 if (!isFirstPage) doc.addPage([101.6, 152.4], 'p');
                 isFirstPage = false;
 
                 const boxData = rawGroups[rawKey];
                 
-                let dest = '';
-                let po = '';
+                let dest = metaDest;
+                let po = metaPO;
                 let inv = '';
                 let challan = '';
 
                 for (let r of boxData) {
-                    if (!dest) dest = findValueInRow(r, destKeywords, '');
-                    if (!po) po = findValueInRow(r, poKeywords, '');
-                    if (!inv) inv = findValueInRow(r, invKeywords, '');
-                    if (!challan) challan = findValueInRow(r, challanKeywords, '');
+                    if (!dest) dest = getColValue(r, ['destination', 'shipto', 'partyname', 'party', 'customer'], '');
+                    if (!po) po = getColValue(r, ['pono', 'ponumber', 'purchaseorder', 'orderno', 'po'], '');
+                    if (!inv) inv = getColValue(r, ['invoice number', 'invoiceno', 'invno', 'invoice'], '');
+                    if (!challan) challan = getColValue(r, ['challan_no', 'challanno', 'challan'], '');
                 }
 
-                dest = dest || 'COCOBLU RETAIL LIMITED (DED3)';
+                dest = dest || 'SHANTANU MATHURA';
                 po = po || '-';
                 inv = inv || '-';
                 challan = challan || '-';
@@ -235,21 +257,22 @@
                 let totalQty = 0;
 
                 boxData.forEach(r => {
-                    const qtyVal = findValueInRow(r, ['QTY', 'QUANTITY', 'BOXQTY'], '1');
+                    const qtyVal = getColValue(r, ['qty', 'quantity', 'boxqty'], '1');
                     const qty = parseInt(qtyVal) || 1;
                     totalQty += qty;
-                    let mrp = findValueInRow(r, ['MRP', 'PRICE', 'AMOUNT'], '0');
-                    if (!mrp.startsWith('₹') && mrp !== '0') {
+                    
+                    let mrp = getColValue(r, ['mrp', 'rate', 'price', 'amount'], '0');
+                    if (!mrp.startsWith('₹') && mrp !== '0' && mrp !== '') {
                         mrp = `₹${mrp}`;
                     }
 
                     tableRows.push([
-                        findValueInRow(r, ['MERCHANTSKU', 'SKU', 'ITEMSKU'], ''),
-                        findValueInRow(r, ['ITEMCODE', 'STYLE', 'CODE', 'STYLECODE'], ''),
-                        findValueInRow(r, ['ITEMNAME', 'CATEGORY', 'DESCRIPTION', 'TITLE', 'ITEM'], ''),
-                        findValueInRow(r, ['COLOR', 'COLOUR', 'COL'], ''),
-                        findValueInRow(r, ['SIZE'], ''),
-                        findValueInRow(r, ['EANCODE', 'BARCODE', 'EAN'], ''),
+                        getColValue(r, ['merchant sku', 'merchantsku', 'sku'], ''),
+                        getColValue(r, ['item code', 'itemcode', 'style', 'code'], ''),
+                        getColValue(r, ['item name', 'itemname', 'title', 'item', 'description'], ''),
+                        getColValue(r, ['color', 'colour', 'col'], ''),
+                        getColValue(r, ['size'], ''),
+                        getColValue(r, ['ean code', 'eancode', 'barcode', 'ean'], ''),
                         qty,
                         mrp
                     ]);
@@ -261,7 +284,7 @@
                     ''
                 ]);
 
-                // Table Render with Optimized Column Widths (Fixed MRP Cut issue)
+                // Table Render with Optimized Column Widths (Sufficient MRP space)
                 doc.autoTable({
                     startY: 27,
                     margin: { left: 3, right: 3 },
@@ -271,14 +294,14 @@
                     headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontSize: 5.5, halign: 'center', cellPadding: 1 },
                     bodyStyles: { fontSize: 5, halign: 'center', cellPadding: 1 },
                     columnStyles: {
-                        0: { cellWidth: 18 }, // SKU
-                        1: { cellWidth: 10 }, // CODE
-                        2: { cellWidth: 22 }, // NAME
-                        3: { cellWidth: 8 },  // COL
-                        4: { cellWidth: 8 },  // SIZE
-                        5: { cellWidth: 14 }, // EAN
-                        6: { cellWidth: 6 },  // QTY
-                        7: { cellWidth: 9.6, halign: 'right' } // MRP (Sufficient width so it won't cut)
+                        0: { cellWidth: 16 }, // Merchant SKU
+                        1: { cellWidth: 10 }, // Item Code
+                        2: { cellWidth: 22 }, // Item Name
+                        3: { cellWidth: 8 },  // Color
+                        4: { cellWidth: 8 },  // Size
+                        5: { cellWidth: 15 }, // EAN Code
+                        6: { cellWidth: 6 },  // Qty
+                        7: { cellWidth: 10.6, halign: 'right' } // MRP (Full space for ₹3995)
                     },
                     styles: { overflow: 'ellipsize', lineWidth: 0.1, strokeColor: [0,0,0] }
                 });
