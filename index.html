@@ -23,7 +23,7 @@
             <h1 class="text-3xl font-extrabold text-gray-800 flex items-center justify-center gap-2">
                 📦 <span>Box Label Generator</span>
             </h1>
-            <p class="text-sm text-gray-500 mt-2">v3.5 Swapped MRP & QTY Layout Engine</p>
+            <p class="text-sm text-gray-500 mt-2">v4.0 Full-Text & Clean MRP Layout Engine</p>
         </div>
 
         <!-- File Upload Area -->
@@ -227,24 +227,24 @@
                 challan = challan || '-';
 
                 // Header Box
-                doc.rect(3, 3, 95.6, 22);
-                doc.line(68, 3, 68, 25);
+                doc.rect(2, 2, 97.6, 22);
+                doc.line(68, 2, 68, 24);
 
                 doc.setFont("Helvetica", "bold");
                 doc.setFontSize(7);
-                doc.text("SHIP TO / DESTINATION:", 5, 7);
+                doc.text("SHIP TO / DESTINATION:", 4, 6);
                 doc.setFontSize(7.5);
-                doc.text(String(dest).substring(0, 38), 5, 11);
+                doc.text(String(dest).substring(0, 38), 4, 10);
 
                 doc.setFontSize(6.5);
-                doc.text(`PO/ORD: ${po} | INV: ${inv}`, 5, 16);
-                doc.text(`CHALLAN NO: ${challan}`, 5, 20);
+                doc.text(`PO/ORD: ${po} | INV: ${inv}`, 4, 15);
+                doc.text(`CHALLAN NO: ${challan}`, 4, 19);
 
                 // Sequential Box Numbering
                 doc.setFontSize(8);
-                doc.text("BOX NO.", 71, 9);
+                doc.text("BOX NO.", 71, 8);
                 doc.setFontSize(14);
-                doc.text(`${currentSequentialBoxNo} / ${totalBoxesFound}`, 71, 17);
+                doc.text(`${currentSequentialBoxNo} / ${totalBoxesFound}`, 71, 16);
 
                 // Items Table
                 const tableRows = [];
@@ -255,11 +255,10 @@
                     const qty = parseInt(qtyVal) || 1;
                     totalQty += qty;
                     
-                    let rawMrp = getColValue(r, ['mrp', 'rate', 'price', 'amount'], '0');
-                    rawMrp = rawMrp.replace(/[^0-9.]/g, ''); 
-                    let mrp = rawMrp ? `₹${rawMrp}` : '0';
+                    // Extract ONLY digits for clean MRP display (removes '1', commas, currency symbols, extra spaces)
+                    let rawMrp = getColValue(r, ['mrp', 'rate', 'price', 'amount'], '');
+                    let mrp = rawMrp.replace(/[^0-9]/g, ''); 
 
-                    // Order Swapped: MRP comes BEFORE QTY
                     tableRows.push([
                         getColValue(r, ['merchant sku', 'merchantsku', 'sku'], ''),
                         getColValue(r, ['item code', 'itemcode', 'style', 'code'], ''),
@@ -272,32 +271,22 @@
                     ]);
                 });
 
-                // Footer Row: Align Total Box QTY to the LAST column (QTY)
+                // Footer Row: TOTAL BOX QTY
                 tableRows.push([
                     { content: 'TOTAL BOX QTY', colSpan: 7, styles: { fontStyle: 'bold', halign: 'left' } },
                     { content: String(totalQty), styles: { fontStyle: 'bold', halign: 'center' } }
                 ]);
 
-                // Table Render: Swapped Headers & Column Widths
+                // Table Render: Auto Widths and No Ellipsis/Dot-Dot
                 doc.autoTable({
-                    startY: 27,
-                    margin: { left: 3, right: 3 },
+                    startY: 25,
+                    margin: { left: 2, right: 2 },
                     head: [['SKU', 'CODE', 'NAME', 'COL', 'SIZE', 'EAN', 'MRP', 'QTY']],
                     body: tableRows,
                     theme: 'grid',
-                    headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontSize: 5.5, halign: 'center', cellPadding: 1 },
-                    bodyStyles: { fontSize: 5, halign: 'center', cellPadding: 1 },
-                    columnStyles: {
-                        0: { cellWidth: 15 }, // SKU
-                        1: { cellWidth: 10 }, // CODE
-                        2: { cellWidth: 20 }, // NAME
-                        3: { cellWidth: 8 },  // COL
-                        4: { cellWidth: 8 },  // SIZE
-                        5: { cellWidth: 14 }, // EAN
-                        6: { cellWidth: 12.6, halign: 'center' }, // MRP (Now Positioned Before QTY with Plenty of Space)
-                        7: { cellWidth: 8, halign: 'center' }     // QTY (At the End)
-                    },
-                    styles: { overflow: 'ellipsize', lineWidth: 0.1, strokeColor: [0,0,0] }
+                    headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontSize: 5.5, halign: 'center', cellPadding: 0.8 },
+                    bodyStyles: { fontSize: 5, halign: 'center', cellPadding: 0.6 },
+                    styles: { overflow: 'visible', lineWidth: 0.1, strokeColor: [0,0,0] }
                 });
 
                 currentSequentialBoxNo++;
