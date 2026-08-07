@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise 4x6 Box Label Generator</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- XLSX Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- jsPDF Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- jsPDF AutoTable Plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        body { background-color: #f3f4f6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="bg-white shadow-2xl rounded-2xl p-8 max-w-xl w-full border border-gray-100 text-center">
+        <div class="mb-6">
+            <h1 class="text-3xl font-extrabold text-gray-800 flex items-center justify-center gap-2">
+                📦 <span>Box Label Generator</span>
+            </h1>
+            <p class="text-sm text-gray-500 mt-2">Ultra-Fast Client Engine | Scaled for 2,000+ Parallel Users</p>
+        </div>
+
+        <!-- File Upload Area -->
+        <div class="border-2 border-dashed border-blue-400 rounded-xl p-8 bg-blue-50/50 hover:bg-blue-50 transition-all cursor-pointer relative" id="dropArea">
+            <input type="file" id="excelFile" accept=".xlsx, .xls" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+            <div class="space-y-3">
+                <svg class="w-12 h-12 text-blue-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                </svg>
+                <p class="text-gray-700 font-medium text-lg">Upload Your Excel File (.xlsx)</p>
+                <p class="text-xs text-gray-400">Click or Drag & Drop File Here</p>
+            </div>
+        </div>
+
+        <!-- Status Message -->
+        <div id="status" class="mt-6 text-sm font-semibold hidden"></div>
+
+        <!-- Result Stats & Download Button -->
+        <div id="resultBox" class="mt-6 hidden bg-green-50 border border-green-200 rounded-xl p-5 space-y-4">
+            <div class="flex justify-between items-center text-green-800">
+                <span class="font-bold text-base">Total Boxes Detected:</span>
+                <span id="boxCountDisplay" class="bg-green-600 text-white font-black px-4 py-1 rounded-full text-lg">0</span>
+            </div>
+            <button id="downloadBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center gap-2">
+                <span>📥 Download All Labels PDF</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const { jsPDF } = window.jspdf;
+        let generatedPdfBlob = null;
+        let totalBoxesFound = 0;
+
+        document.getElementById('excelFile').addEventListener('change', handleFileSelect);
+
+        async function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            showStatus("⚡ Processing Excel Data...", "text-blue-600");
+
+            const reader = new FileReader();
+            reader.onload = async function(evt) {
+                try {
+                    const data = new Uint8Array(evt.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+
+                    let jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+
+                    // Find Box Column Header
+                    let headerIndex = -1;
+                    let boxColIdx = -1;
+
+                    for (let r = 0; r < Math.min(jsonData.length, 10); r++) {
+                        const row = jsonData[r];
+                        if (!row) continue;
+                        for (let c = 0; c < row.length; c++) {
+                            const val = String(row[c] || '').toUpperCase().trim();
+                            if (['BOX COUNT', 'BOX NO', 'BOX_NO', 'BOX', 'BOX NUMBER'].includes(val)) {
+                                headerIndex = r;
+                                boxColIdx = c;
+                                break;
+                            }
+                        }
+                        if (headerIndex !== -1) break;
+                    }
+
+                    if (headerIndex === -1) {
+                        showStatus("❌ 'BOX COUNT' Column not found in Excel!", "text-red-600");
+                        return;
+                    }
+
+                    // Format Rows to Object Array
+                    const rawData = XLSX.utils.sheet_to_json(firstSheet, { range: headerIndex });
+                    
+                    // Generate PDF
+                    await generatePDF(rawData);
+
+                } catch (err) {
+                    console.error(err);
+                    showStatus("❌ Error processing file: " + err.message, "text-red-600");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        async function generatePDF(data) {
+            // Standardize Keys
+            const cleanData = data.map(row => {
+                const newRow = {};
+                for (let key in row) {
+                    newRow[key.trim().toUpperCase()] = row[key];
+                }
+                return newRow;
+            });
+
+            // Group by Box
+            const groups = {};
+            let maxBox = 0;
+
+            cleanData.forEach(row => {
+                const boxNo = parseInt(row['BOX COUNT'] || row['BOX NO'] || row['BOX_NO'] || row['BOX'] || 1);
+                if (!groups[boxNo]) groups[boxNo] = [];
+                groups[boxNo].push(row);
+                if (boxNo > maxBox) maxBox = boxNo;
+            });
+
+            totalBoxesFound = maxBox;
+
+            // Setup jsPDF (4x6 inches in mm -> 101.6mm x 152.4mm)
+            const doc = new jsPDF({
+                orientation: 'p',
+                unit: 'mm',
+                format: [101.6, 152.4]
+            });
+
+            let isFirstPage = true;
+
+            for (let boxNo in groups) {
+                if (!isFirstPage) doc.addPage([101.6, 152.4], 'p');
+                isFirstPage = false;
+
+                const boxData = groups[boxNo];
+                const firstRow = boxData[0];
+
+                const dest = firstRow['DESTINATION'] || firstRow['SHIP TO'] || firstRow['PARTY NAME'] || 'COCOBLU RETAIL LIMITED (DED3)';
+                const po = firstRow['PO'] || firstRow['PO NO'] || firstRow['PO NUMBER'] || '';
+                const inv = firstRow['INVOICE NUMBER'] || firstRow['INV'] || firstRow['INVOICE NO'] || '';
+                const challan = firstRow['CHALLAN_NO'] || firstRow['CHALLAN'] || firstRow['CHALLAN NO'] || '';
+
+                // Draw Header Border Box
+                doc.rect(3, 3, 95.6, 22);
+                doc.line(68, 3, 68, 25);
+
+                // Header Text
+                doc.setFont("Helvetica", "bold");
+                doc.setFontSize(7);
+                doc.text("SHIP TO / DESTINATION:", 5, 7);
+                doc.setFontSize(7.5);
+                doc.text(String(dest).substring(0, 38), 5, 11);
+
+                doc.setFontSize(6.5);
+                doc.text(`PO: ${po} | INV: ${inv}`, 5, 16);
+                doc.text(`CHALLAN NO: ${challan}`, 5, 20);
+
+                // Box Number Info
+                doc.setFontSize(8);
+                doc.text("BOX NO.", 71, 9);
+                doc.setFontSize(14);
+                doc.text(`${boxNo} / ${maxBox}`, 71, 17);
+
+                // Table Items Mapping
+                const tableRows = [];
+                let totalQty = 0;
+
+                boxData.forEach(r => {
+                    const qty = parseInt(r['QTY'] || r['QUANTITY'] || 1);
+                    totalQty += qty;
+                    const mrp = r['MRP'] || r['PRICE'] || 0;
+
+                    tableRows.push([
+                        r['MERCHANT SKU'] || r['SKU'] || r['ITEM'] || '',
+                        r['ITEM CODE'] || r['STYLE'] || '',
+                        r['ITEM NAME'] || r['CATEGORY'] || '',
+                        r['COLOR'] || r['COLOUR'] || '',
+                        r['SIZE'] || '',
+                        r['EAN CODE'] || r['BARCODE'] || r['EAN'] || '',
+                        qty,
+                        `₹${mrp}`
+                    ]);
+                });
+
+                // Add Footer Row
+                tableRows.push([
+                    { content: 'TOTAL BOX QTY', colSpan: 6, styles: { fontStyle: 'bold', halign: 'left' } },
+                    { content: String(totalQty), styles: { fontStyle: 'bold', halign: 'center' } },
+                    ''
+                ]);
+
+                // Render Table
+                doc.autoTable({
+                    startY: 27,
+                    margin: { left: 3, right: 3 },
+                    head: [['SKU', 'CODE', 'NAME', 'COL', 'SIZE', 'EAN', 'QTY', 'MRP']],
+                    body: tableRows,
+                    theme: 'grid',
+                    headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontSize: 5.5, halign: 'center', cellPadding: 1 },
+                    bodyStyles: { fontSize: 5, halign: 'center', cellPadding: 1 },
+                    styles: { overflow: 'linebreak', lineWidth: 0.1, strokeColor: [0,0,0] }
+                });
+            }
+
+            generatedPdfBlob = doc.output('blob');
+            
+            showStatus("✅ Labels Ready!", "text-green-600");
+            document.getElementById('boxCountDisplay').innerText = totalBoxesFound;
+            document.getElementById('resultBox').classList.remove('hidden');
+        }
+
+        document.getElementById('downloadBtn').addEventListener('click', () => {
+            if (!generatedPdfBlob) return;
+            const url = URL.createObjectURL(generatedPdfBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ALL_BOX_LABELS_${totalBoxesFound}_UNITS.pdf`;
+            a.click();
+        });
+
+        function showStatus(msg, colorClass) {
+            const st = document.getElementById('status');
+            st.className = `mt-6 text-sm font-semibold ${colorClass}`;
+            st.innerText = msg;
+            st.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
