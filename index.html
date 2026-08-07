@@ -23,7 +23,7 @@
             <h1 class="text-3xl font-extrabold text-gray-800 flex items-center justify-center gap-2">
                 📦 <span>Box Label Generator</span>
             </h1>
-            <p class="text-sm text-gray-500 mt-2">v3.4 Precise MRP Border Alignment Fix</p>
+            <p class="text-sm text-gray-500 mt-2">v3.5 Swapped MRP & QTY Layout Engine</p>
         </div>
 
         <!-- File Upload Area -->
@@ -256,10 +256,10 @@
                     totalQty += qty;
                     
                     let rawMrp = getColValue(r, ['mrp', 'rate', 'price', 'amount'], '0');
-                    // Clean currency symbols or superscripts to prevent text pushing outside border
                     rawMrp = rawMrp.replace(/[^0-9.]/g, ''); 
                     let mrp = rawMrp ? `₹${rawMrp}` : '0';
 
+                    // Order Swapped: MRP comes BEFORE QTY
                     tableRows.push([
                         getColValue(r, ['merchant sku', 'merchantsku', 'sku'], ''),
                         getColValue(r, ['item code', 'itemcode', 'style', 'code'], ''),
@@ -267,22 +267,22 @@
                         getColValue(r, ['color', 'colour', 'col'], ''),
                         getColValue(r, ['size'], ''),
                         getColValue(r, ['ean code', 'eancode', 'barcode', 'ean'], ''),
-                        qty,
-                        mrp
+                        mrp,
+                        qty
                     ]);
                 });
 
+                // Footer Row: Align Total Box QTY to the LAST column (QTY)
                 tableRows.push([
-                    { content: 'TOTAL BOX QTY', colSpan: 6, styles: { fontStyle: 'bold', halign: 'left' } },
-                    { content: String(totalQty), styles: { fontStyle: 'bold', halign: 'center' } },
-                    ''
+                    { content: 'TOTAL BOX QTY', colSpan: 7, styles: { fontStyle: 'bold', halign: 'left' } },
+                    { content: String(totalQty), styles: { fontStyle: 'bold', halign: 'center' } }
                 ]);
 
-                // Table Render with Expanded MRP Width and Center/Fit Styling
+                // Table Render: Swapped Headers & Column Widths
                 doc.autoTable({
                     startY: 27,
                     margin: { left: 3, right: 3 },
-                    head: [['SKU', 'CODE', 'NAME', 'COL', 'SIZE', 'EAN', 'QTY', 'MRP']],
+                    head: [['SKU', 'CODE', 'NAME', 'COL', 'SIZE', 'EAN', 'MRP', 'QTY']],
                     body: tableRows,
                     theme: 'grid',
                     headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontSize: 5.5, halign: 'center', cellPadding: 1 },
@@ -294,8 +294,8 @@
                         3: { cellWidth: 8 },  // COL
                         4: { cellWidth: 8 },  // SIZE
                         5: { cellWidth: 14 }, // EAN
-                        6: { cellWidth: 6 },  // QTY
-                        7: { cellWidth: 14.6, halign: 'center', cellPadding: { left: 0.5, right: 0.5 } } // MRP (Width increased to 14.6mm + Center aligned + Padding fixed)
+                        6: { cellWidth: 12.6, halign: 'center' }, // MRP (Now Positioned Before QTY with Plenty of Space)
+                        7: { cellWidth: 8, halign: 'center' }     // QTY (At the End)
                     },
                     styles: { overflow: 'ellipsize', lineWidth: 0.1, strokeColor: [0,0,0] }
                 });
